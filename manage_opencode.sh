@@ -97,18 +97,6 @@ update_only() {
     read -p "Press Enter..."
 }
 
-add_multi_agent() {
-    show_header
-    echo -e "${BLUE}[*] Registering Multi-Agent System...${NC}"
-    if [ -f "/sdcard/Download/AGENT1.md" ]; then
-        cp "/sdcard/Download/AGENT1.md" "$HOME/AGENTS.md"
-        echo -e "${GREEN}[+] AGENTS.md linked to Home directory.${NC}"
-    else
-        echo -e "${RED}[!] Error: /sdcard/Download/AGENT1.md not found!${NC}"
-    fi
-    read -p "Press Enter..."
-}
-
 while true; do
     show_header
     VER=$(opencode --version 2>/dev/null || echo "NOT INSTALLED")
@@ -116,16 +104,14 @@ while true; do
     echo -e "${BLUE}------------------------------------------${NC}"
     echo -e "1) ${GREEN}Full Fresh Installation${NC}"
     echo -e "2) ${GREEN}Quick Update to Latest${NC}"
-    echo -e "3) ${GREEN}Install Multi-Agent Skill (AGENT1.md)${NC}"
-    echo -e "4) ${RED}Exit${NC}"
+    echo -e "3) ${RED}Exit${NC}"
     echo -e "${BLUE}------------------------------------------${NC}"
     echo -n "Select: "
     read opt
     case $opt in
         1) install_fresh ;;
         2) update_only ;;
-        3) add_multi_agent ;;
-        4) exit 0 ;;
+        3) exit 0 ;;
         *) echo -e "Invalid"; sleep 1 ;;
     esac
 done
