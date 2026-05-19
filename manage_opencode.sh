@@ -1,6 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
+# ==========================================
 # Colors
+# ==========================================
 RED="\033[0;31m"
 GREEN="\033[0;32m"
 BLUE="\033[0;34m"
@@ -8,130 +10,135 @@ CYAN="\033[0;36m"
 YELLOW="\033[1;33m"
 NC="\033[0m"
 
+# ==========================================
+# UI Functions
+# ==========================================
 show_header() {
     clear
     echo -e "${BLUE}==========================================${NC}"
-    echo -e "${CYAN}    🌟 OPENCODE MASTER MANAGER V2.0    ${NC}"
+    echo -e "${CYAN}    🌟 OPENCODE MASTER MANAGER V3.0    ${NC}"
     echo -e "${BLUE}==========================================${NC}"
 }
 
-install_or_update_local_build() {
+# ==========================================
+# Core Build & Update Engine
+# ==========================================
+core_build_process() {
     echo -e "${YELLOW}[*] Preparing local Termux builder for OpenCode...${NC}"
-
-    # 1. install Dependencies  (hide log  > /dev/null 2>&1)
-    echo -e "${BLUE}[*] Installing required build dependencies (clang, python, make, etc.)...${NC}"
-    pkg install -y git make patchelf binutils wget jq clang python curl > /dev/null 2>&1
+    
+    # 1. Install dependencies
+    pkg install -y git make patchelf binutils wget jq
     
     BUILD_DIR="$HOME/tmp/opencode-termux-build"
     
-    # 2. pull Original Repo realtime
+    # 2. Update or clone main build repo
+    if [ ! -d "$BUILD_DIR" ]; then
+        echo -e "${BLUE}[*] Cloning opencode-termux build repository...${NC}"
+        git clone https://github.com/Hope2333/opencode-termux.git "$BUILD_DIR"
+    else
+        echo -e "${BLUE}[*] Updating existing build repository...${NC}"
+        cd "$BUILD_DIR" && git pull
+    fi
+    
+    # 3. Update or clone bun-termux-loader
+    LOADER_DIR="$BUILD_DIR/third-party/bun-termux-loader"
+    if [ ! -d "$LOADER_DIR" ]; then
+        echo -e "${BLUE}[*] Cloning bun-termux-loader...${NC}"
+        git clone https://github.com/Hope2333/bun-termux-loader.git "$LOADER_DIR"
+    else
+        echo -e "${BLUE}[*] Updating bun-termux-loader to latest version...${NC}"
+        cd "$LOADER_DIR" && git pull
+    fi
+    
+    # 4. Fetch latest version from upstream
     echo -e "${YELLOW}[*] Fetching latest version tag from upstream (anomalyco/opencode)...${NC}"
     UPSTREAM_REPO="anomalyco/opencode"
     LATEST_VER=$(curl -s "https://api.github.com/repos/$UPSTREAM_REPO/releases/latest" | grep '"tag_name":' | cut -d '"' -f 4 | sed 's/v//')
     
     if [ -z "$LATEST_VER" ]; then
-        echo -e "${RED}[!] Failed to get upstream version from GitHub API. Please check your internet.${NC}"
+        echo -e "${RED}[!] Failed to get upstream version. Check internet or API limit.${NC}"
         return 1
     fi
-    echo -e "${GREEN}[+] Target Upstream Version: v$LATEST_VER${NC}"
-
-    # 3. Prepare Build 
-    echo -e "${BLUE}[*] Preparing clean build environment...${NC}"
-    if [ -d "$BUILD_DIR" ]; then
-        rm -rf "$BUILD_DIR"
-    fi
-    
-    mkdir -p "$HOME/tmp"
-    git clone --depth 1 https://github.com/Hope2333/opencode-termux.git "$BUILD_DIR" > /dev/null 2>&1
-    
-    # Clone bun loader
-    git clone --depth 1 https://github.com/Hope2333/bun-termux-loader.git "$BUILD_DIR/third-party/bun-termux-loader" > /dev/null 2>&1
     
     echo -e "${CYAN}[*] Starting local compilation and packaging for version: $LATEST_VER...${NC}"
     echo -e "${YELLOW}[!] This may take a few minutes. Please wait...${NC}"
     
     cd "$BUILD_DIR"
+    make clean > /dev/null 2>&1
     
-    # 4. start to Build
+    # ==========================================
+    # HACK: Bypass Bun marker for version >= 1.15.5
+    # ==========================================
+    echo -e "${YELLOW}[*] Applying runtime patch to bypass Bun marker...${NC}"
+    sed -i 's/if not check_bun_marker(input_data):/if False:/g' "$LOADER_DIR/build.py"
+    
+    # 5. Build and Package
     make all VER="$LATEST_VER" PKG=deb
     
-    # 5. search DIR .deb 
-    DEB_FILE=$(find "$BUILD_DIR" -type f -name "opencode_${LATEST_VER}_*.deb" | head -n 1)
+    DEB_FILE="$BUILD_DIR/packaging/dpkg/opencode_${LATEST_VER}_aarch64.deb"
     
-    if [ -n "$DEB_FILE" ] && [ -f "$DEB_FILE" ]; then
-        echo -e "${BLUE}[*] Local build successful! Installing package...${NC}"
+    if [ -f "$DEB_FILE" ]; then
+        echo -e "${BLUE}[*] Local build successful! Installing...${NC}"
         pkg install --reinstall -y "$DEB_FILE"
-        echo -e "${GREEN}[+] OpenCode successfully updated to Real-Time Latest Version (v$LATEST_VER)!${NC}"
+        echo -e "${GREEN}[+] Opencode updated successfully to the latest version ($LATEST_VER)!${NC}"
         
-        
-        rm -rf "$BUILD_DIR"
-        echo -e "${BLUE}[*] Cleaned up temporary build files.${NC}"
+        # Cleanup
+        make clean > /dev/null 2>&1
     else
         echo -e "${RED}[!] Build failed. Could not find generated .deb file.${NC}"
-        echo -e "${YELLOW}[!] Please check the compilation logs above for errors.${NC}"
         return 1
     fi
 }
 
+# ==========================================
+# Menu Options
+# ==========================================
 install_fresh() {
     show_header
-    echo -e "${YELLOW}[*] Preparing fresh installation...${NC}"
-    
-    # ติดตั้งระบบ Glibc สำหรับ Termux
-    echo -e "${BLUE}[*] Setting up Termux glibc environment...${NC}"
-    pkg update -y && pkg upgrade -y
-    pkg install -y tur-repo
+    echo -e "${YELLOW}[*] Preparing fresh installation for new user...${NC}"
+    pkg update && pkg upgrade -y
     pkg install -y glibc-repo
     pkg install -y glibc openssl-glibc ripgrep curl
     
-    install_or_update_local_build
-    echo -e "\n${GREEN}[+] Fresh installation complete! Type 'opencode' to start.${NC}"
-    read -p "Press Enter to return to menu..."
+    core_build_process
+    echo ""
+    read -p "Press Enter to return to main menu..."
 }
 
 update_only() {
     show_header
-    echo -e "${YELLOW}[*] Checking for updates...${NC}"
+    echo -e "${YELLOW}[*] Checking for Real-time updates...${NC}"
     
     if ! command -v opencode >/dev/null 2>&1; then
         echo -e "${RED}[!] Opencode is not installed. Please use Option 1 for Fresh Installation first.${NC}"
-        read -p "Press Enter to return to menu..."
+        echo ""
+        read -p "Press Enter to return to main menu..."
         return
     fi
     
-    install_or_update_local_build
-    read -p "Press Enter to return to menu..."
+    core_build_process
+    echo ""
+    read -p "Press Enter to return to main menu..."
 }
 
-add_multi_agent() {
-    show_header
-    echo -e "${BLUE}[*] Registering Multi-Agent System...${NC}"
-    if [ -f "/sdcard/Download/AGENT1.md" ]; then
-        cp "/sdcard/Download/AGENT1.md" "$HOME/AGENTS.md"
-        echo -e "${GREEN}[+] AGENTS.md linked to Home directory.${NC}"
-    else
-        echo -e "${RED}[!] Error: /sdcard/Download/AGENT1.md not found!${NC}"
-    fi
-    read -p "Press Enter to return to menu..."
-}
-
+# ==========================================
+# Main Loop
+# ==========================================
 while true; do
     show_header
     VER=$(opencode --version 2>/dev/null || echo "NOT INSTALLED")
     echo -e "Current Opencode: ${YELLOW}$VER${NC}"
     echo -e "${BLUE}------------------------------------------${NC}"
-    echo -e "1) ${GREEN}Full Fresh Installation${NC}"
-    echo -e "2) ${GREEN}Quick Update to Latest${NC}"
-    echo -e "3) ${GREEN}Install Multi-Agent Skill (AGENT1.md)${NC}"
-    echo -e "4) ${RED}Exit${NC}"
+    echo -e "1) ${GREEN}Full Fresh Installation (For New Users)${NC}"
+    echo -e "2) ${GREEN}Real-time Auto Update (To Latest Version)${NC}"
+    echo -e "3) ${RED}Exit${NC}"
     echo -e "${BLUE}------------------------------------------${NC}"
-    echo -n "Select: "
+    echo -n "Select [1-3]: "
     read opt
     case $opt in
         1) install_fresh ;;
         2) update_only ;;
-        3) add_multi_agent ;;
-        4) exit 0 ;;
-        *) echo -e "Invalid option"; sleep 1 ;;
+        3) echo -e "${CYAN}Exiting...${NC}"; exit 0 ;;
+        *) echo -e "${RED}Invalid option!${NC}"; sleep 1 ;;
     esac
 done
