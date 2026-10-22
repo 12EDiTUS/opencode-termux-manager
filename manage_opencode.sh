@@ -92,17 +92,26 @@ core_build_process() {
     fi
     
     
-    make all VER="$LATEST_VER" PKG=deb
+    rm -f "$BUILD_DIR"/packing/dpkg/*_"${LATEST_VER}"_*.deb 2>/dev/null
+    if ! make all VER="$LATEST_VER" PKG=deb; then
+        echo -e "${RED}[!] Critical Error: Build compilation failed.${NC}"
+        return 1
+    fi
     
-    DEB_FILE="$BUILD_DIR/packaging/dpkg/opencode_${LATEST_VER}_aarch64.deb"
+    # The build repo now writes to packing/dpkg and names the v1 package
+    # opencode1-wrapper_<version>_<arch>.deb.
+    DEB_FILE=$(find "$BUILD_DIR/packing/dpkg" -maxdepth 1 -type f \
+        -name "*_${LATEST_VER}_*.deb" -print -quit 2>/dev/null)
     
-   
-    if [ -f "$DEB_FILE" ]; then
-        echo -e "${BLUE}[*] Local build successful! Deploying package...${NC}"
-        pkg install --reinstall -y "$DEB_FILE"
+    if [ -n "$DEB_FILE" ] && [ -f "$DEB_FILE" ]; then
+        DEB_PKG=$(dpkg-deb -f "$DEB_FILE" Package 2>/dev/null)
+        echo -e "${BLUE}[*] Local build successful ($DEB_PKG). Deploying package...${NC}"
+        if ! pkg install --reinstall -y "$DEB_FILE"; then
+            echo -e "${RED}[!] Package installation failed.${NC}"
+            return 1
+        fi
         echo -e "${GREEN}[+] Opencode successfully deployed to version: $LATEST_VER !${NC}"
         
-       
         make clean > /dev/null 2>&1
         rm -rf "$BUILD_DIR/.work" 2>/dev/null
     else
