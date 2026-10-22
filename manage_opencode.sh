@@ -17,6 +17,25 @@ show_header() {
     echo -e "${BLUE}==========================================${NC}"
 }
 
+# Current repo installs the v1 line as opencode1 (v2 keeps the opencode name).
+installed_cmd() {
+    if command -v opencode1 >/dev/null 2>&1; then
+        echo "opencode1"
+    elif command -v opencode >/dev/null 2>&1; then
+        echo "opencode"
+    fi
+}
+
+installed_version() {
+    local cmd
+    cmd="$(installed_cmd)"
+    if [ -n "$cmd" ]; then
+        "$cmd" --version 2>/dev/null || echo "NOT INSTALLED"
+    else
+        echo "NOT INSTALLED"
+    fi
+}
+
 # ==========================================
 # Helper: Safe Git Sync 
 # ==========================================
@@ -92,17 +111,43 @@ core_build_process() {
     fi
     
     
-    make all VER="$LATEST_VER" PKG=deb
+    rm -f "$BUILD_DIR"/packing/dpkg/*_"${LATEST_VER}"_*.deb 2>/dev/null
+    if ! make all VER="$LATEST_VER" PKG=deb; then
+        echo -e "${RED}[!] Critical Error: Build compilation failed.${NC}"
+        return 1
+    fi
     
-    DEB_FILE="$BUILD_DIR/packaging/dpkg/opencode_${LATEST_VER}_aarch64.deb"
+    # The build repo now writes to packing/dpkg and names the v1 package
+    # opencode1-wrapper_<version>_<arch>.deb.
+    DEB_FILE=$(find "$BUILD_DIR/packing/dpkg" -maxdepth 1 -type f \
+        -name "*_${LATEST_VER}_*.deb" -print -quit 2>/dev/null)
     
-   
-    if [ -f "$DEB_FILE" ]; then
-        echo -e "${BLUE}[*] Local build successful! Deploying package...${NC}"
-        pkg install --reinstall -y "$DEB_FILE"
-        echo -e "${GREEN}[+] Opencode successfully deployed to version: $LATEST_VER !${NC}"
+    if [ -n "$DEB_FILE" ] && [ -f "$DEB_FILE" ]; then
+        DEB_PKG=$(dpkg-deb -f "$DEB_FILE" Package 2>/dev/null)
+        echo -e "${BLUE}[*] Local build successful ($DEB_PKG). Deploying package...${NC}"
+        if ! pkg install --reinstall -y "$DEB_FILE"; then
+            echo -e "${RED}[!] Package installation failed.${NC}"
+            return 1
+        fi
+        hash -r
         
-       
+        # Upstream renamed the v1 command to opencode1; move old v1 data over
+        # once so config/sessions keep working after the migration.
+        if [ "$DEB_PKG" = "opencode1-wrapper" ] && [ -x "$BUILD_DIR/scripts/migrate-to-opencode1.sh" ]; then
+            if ! "$BUILD_DIR/scripts/migrate-to-opencode1.sh" check >/dev/null 2>&1; then
+                echo -e "${BLUE}[*] Migrating existing config/sessions to opencode1 layout...${NC}"
+                "$BUILD_DIR/scripts/migrate-to-opencode1.sh" isolate >/dev/null 2>&1 || \
+                    echo -e "${YELLOW}[!] Migration skipped; old data was left untouched.${NC}"
+            fi
+        fi
+        
+        CMD=$(installed_cmd)
+        VER=$(installed_version)
+        echo -e "${GREEN}[+] Opencode successfully deployed to version: $VER (run: ${CMD:-opencode})!${NC}"
+        if [ "$CMD" = "opencode1" ]; then
+            echo -e "${YELLOW}[!] Note: the v1 command is now 'opencode1' (the old 'opencode' package was replaced).${NC}"
+        fi
+        
         make clean > /dev/null 2>&1
         rm -rf "$BUILD_DIR/.work" 2>/dev/null
     else
@@ -154,7 +199,7 @@ update_only() {
     show_header
     echo -e "${YELLOW}[*] Executing Real-time Auto-Update Protocol...${NC}"
     
-    if ! command -v opencode >/dev/null 2>&1; then
+    if [ -z "$(installed_cmd)" ]; then
         echo -e "${RED}[!] Detection Error: Opencode binary not found in system paths.${NC}"
         echo -e "${YELLOW}[*] Please select Option 1 to initialize setup first.${NC}"
         echo ""
@@ -172,7 +217,7 @@ update_only() {
 # ==========================================
 while true; do
     show_header
-    VER=$(opencode --version 2>/dev/null || echo "NOT INSTALLED")
+    VER=$(installed_version)
     echo -e "Current Installed Version: ${YELLOW}$VER${NC}"
     echo -e "${BLUE}------------------------------------------${NC}"
     echo -e "1) ${GREEN}Full Fresh Installation (For New Users / System Fix)${NC}"
